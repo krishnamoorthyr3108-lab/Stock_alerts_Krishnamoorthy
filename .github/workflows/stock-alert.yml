@@ -22,7 +22,7 @@ jobs:
         run: pip install pandas yfinance
 
       - name: Run script
-        run: python main.py
+        run: python stocks.py && python main.py        
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
