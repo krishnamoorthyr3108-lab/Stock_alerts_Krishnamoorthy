@@ -4,8 +4,7 @@ import json
 import smtplib
 import os
 from email.mime.text import MIMEText
-from datetime import datetime
-from datetime import date
+from datetime import datetime, date
 import time
 
 # =========================
@@ -15,42 +14,44 @@ EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 
-RETURN_THRESHOLD = 5   # change to 5 after testing
+RETURN_THRESHOLD = 5
 MIN_MARKET_CAP = 500
 MIN_VOLUME = 50000
 MIN_PRICE = 20
 
-BATCH_SIZE = 100   # 🔥 important to avoid rate limit
+BATCH_SIZE = 150
 
 # =========================
-# LOAD STOCK LIST
+# LOAD DATA
 # =========================
 stocks_df = pd.read_csv("stocks.csv")
+sector_df = pd.read_csv("sector_map.csv")
+
+all_symbols = stocks_df['symbol'].tolist()
 
 # =========================
 # FETCH DATA
 # =========================
-def fetch_data(symbols):
+def fetch_batch(symbols):
     return yf.download(
         tickers=" ".join(symbols),
         period="10d",
         interval="1d",
         group_by="ticker",
-        threads=False
+        threads=True
     )
 
 # =========================
 # PROCESS
 # =========================
 def process_all():
-    all_symbols = stocks_df['symbol'].tolist()
     results = []
 
     for i in range(0, len(all_symbols), BATCH_SIZE):
         batch = all_symbols[i:i+BATCH_SIZE]
-        print(f"Processing batch {i} → {i+len(batch)}")
+        print(f"Processing {i} → {i+len(batch)}")
 
-        data = fetch_data(batch)
+        data = fetch_batch(batch)
 
         for symbol in batch:
             try:
@@ -58,6 +59,7 @@ def process_all():
                     continue
 
                 df = data[symbol].dropna()
+
                 if len(df) < 5:
                     continue
 
@@ -67,72 +69,44 @@ def process_all():
                 return_1d = ((current_price - prev_price) / prev_price) * 100
                 avg_vol = df['Volume'].tail(5).mean()
 
-                row = stocks_df[stocks_df['symbol'] == symbol]
-                market_cap = row['market_cap'].values[0]
-                sector = row['sector'].values[0]
-
-                if (
-                    return_1d > RETURN_THRESHOLD and
-                    market_cap > MIN_MARKET_CAP and
-                    avg_vol > MIN_VOLUME and
-                    current_price > MIN_PRICE
-                ):
-                    results.append({
-                        "symbol": symbol,
-                        "sector": sector,
-                        "return": round(return_1d, 2),
-                        "price": round(current_price, 2),
-                        "avg_vol": int(avg_vol)
-                    })
+                results.append({
+                    "symbol": symbol,
+                    "return": round(return_1d, 2),
+                    "price": round(current_price, 2),
+                    "avg_vol": int(avg_vol)
+                })
 
             except Exception as e:
                 print(f"Error {symbol}: {e}")
 
-        time.sleep(2)  # 🔥 avoid rate limit
+        time.sleep(1)
 
     return pd.DataFrame(results)
 
 # =========================
-# SECTOR ANALYSIS
+# EMAIL
 # =========================
-def analyze_sectors(df):
+def send_email(df, sector_summary):
     if df.empty:
-        return pd.DataFrame()
-
-    sector_summary = df.groupby("sector").agg({
-        "symbol": "count",
-        "return": "mean"
-    }).rename(columns={
-        "symbol": "stock_count",
-        "return": "avg_return"
-    }).sort_values(by="stock_count", ascending=False)
-
-    return sector_summary
-
-# =========================
-# EMAIL ALERT
-# =========================
-def send_email(results_df, sector_df):
-    if results_df.empty:
-        print("No alerts to send")
+        print("No alerts")
         return
 
     if not (EMAIL_SENDER and EMAIL_PASSWORD and EMAIL_RECEIVER):
         print("Email not configured")
         return
 
-    body = "🔥 STOCK ALERTS\n\n"
+    body = "🚨 STOCK ALERTS\n\n"
 
-    for _, r in results_df.iterrows():
-        body += f"{r['symbol']} | {r['sector']} | {r['return']}%\n"
+    for _, r in df.iterrows():
+        body += f"{r['symbol']} | {r['sector']} | {r['return']}% | Vol:{r['avg_vol']}\n"
 
-    body += "\n📊 SECTOR SUMMARY\n\n"
+    body += "\n📊 SECTOR STRENGTH\n\n"
 
-    for _, r in sector_df.iterrows():
-        body += f"{_} | Count: {r['stock_count']} | Avg Return: {round(r['avg_return'],2)}%\n"
+    for sector, row in sector_summary.iterrows():
+        body += f"{sector} → {round(row['avg_return'],2)}% ({row['stock_count']} stocks)\n"
 
     msg = MIMEText(body)
-    msg['Subject'] = "🚨 Stock + Sector Alert"
+    msg['Subject'] = "Stock Screener Alert"
     msg['From'] = EMAIL_SENDER
     msg['To'] = EMAIL_RECEIVER
 
@@ -154,7 +128,7 @@ def load_last():
         with open("last_run.json", "r") as f:
             return json.load(f)
     except:
-        return []
+        return {}
 
 def save_last(data):
     with open("last_run.json", "w") as f:
@@ -166,34 +140,55 @@ def save_last(data):
 def main():
     print(f"Running at {datetime.now()}")
 
-    results_df = process_all()
+    df = process_all()
+
+    if df.empty:
+        print("No stocks found")
+        return
+
+    # Merge sector + market cap
+    df = df.merge(sector_df, on="symbol", how="left")
+    df['sector'] = df['sector'].fillna("Unknown")
+    df['market_cap'] = df['market_cap'].fillna(0)
+
+    # Apply Screener Filters
+    df = df[
+        (df['return'] > RETURN_THRESHOLD) &
+        (df['market_cap'] > MIN_MARKET_CAP) &
+        (df['avg_vol'] > MIN_VOLUME) &
+        (df['price'] > MIN_PRICE)
+    ]
+    
+    df.to_csv("latest_results.csv", index=False)
 
     print("\n🔍 STOCK RESULTS:")
-    print(results_df)
+    print(df)
 
-    sector_df = analyze_sectors(results_df)
+    # Sector analysis
+    sector_summary = df.groupby("sector").agg(
+        stock_count=("symbol", "count"),
+        avg_return=("return", "mean")
+    ).sort_values(by="avg_return", ascending=False)
 
     print("\n📊 SECTOR STRENGTH:")
-    print(sector_df)
+    print(sector_summary)
 
     today = str(date.today())
-
     last_data = load_last()
 
-    if isinstance(last_data, dict) and last_data.get("date") == today:
+    if last_data.get("date") == today:
         last_symbols = last_data.get("symbols", [])
     else:
         last_symbols = []
 
-    new_df = results_df[~results_df['symbol'].isin(last_symbols)]
+    new_df = df[~df['symbol'].isin(last_symbols)]
 
-    send_email(new_df, sector_df)
-    
+    send_email(new_df, sector_summary)
 
     save_last({
-              "date": today,
-              "symbols": results_df['symbol'].tolist()
-             })
+        "date": today,
+        "symbols": df['symbol'].tolist()
+    })
 
 
 if __name__ == "__main__":
