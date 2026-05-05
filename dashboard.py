@@ -8,7 +8,7 @@ st.set_page_config(layout="wide")
 st.title("📊 Stock Screener Dashboard")
 
 # =========================
-# LOAD DATA (SAFE)
+# LOAD DATA
 # =========================
 file_path = "latest_results.csv"
 
@@ -23,7 +23,7 @@ if df.empty:
     st.stop()
 
 # =========================
-# SIDEBAR FILTER (DRILL DOWN)
+# SIDEBAR FILTERS
 # =========================
 st.sidebar.header("🔍 Filters")
 
@@ -34,21 +34,75 @@ selected_sector = st.sidebar.selectbox(
     ["All"] + sector_list
 )
 
-# Apply filter
+min_return = st.sidebar.slider("Min Return %", 0, 20, 5)
+min_volume = st.sidebar.slider("Min Avg Volume", 0, 1000000, 50000)
+
+# Apply filters
+filtered_df = df.copy()
+
 if selected_sector != "All":
-    filtered_df = df[df['sector'] == selected_sector]
-else:
-    filtered_df = df.copy()
+    filtered_df = filtered_df[filtered_df['sector'] == selected_sector]
+
+filtered_df = filtered_df[
+    (filtered_df['return'] >= min_return) &
+    (filtered_df['avg_vol'] >= min_volume)
+]
 
 # =========================
-# SECTOR HEATMAP
+# SECTOR LEADERBOARD
 # =========================
-sector_df = filtered_df.groupby("sector").agg(
+st.subheader("🏆 Sector Leaderboard")
+
+sector_summary = df.groupby("sector").agg(
     stock_count=("symbol", "count"),
     avg_return=("return", "mean")
 ).reset_index()
 
+sector_summary = sector_summary.sort_values(by="avg_return", ascending=False)
+
+col1, col2 = st.columns([2, 3])
+
+with col1:
+    st.dataframe(
+        sector_summary,
+        use_container_width=True
+    )
+
+with col2:
+    fig_leader = px.bar(
+        sector_summary,
+        x="avg_return",
+        y="sector",
+        orientation="h",
+        color="avg_return",
+        color_continuous_scale="RdYlGn",
+        title="Sector Strength Ranking"
+    )
+    st.plotly_chart(fig_leader, use_container_width=True)
+
+# =========================
+# TOP MOVERS
+# =========================
+st.subheader("🚀 Top Movers")
+
+top_n = st.slider("Top N Stocks", 5, 50, 10)
+
+top_movers = filtered_df.sort_values(by="return", ascending=False).head(top_n)
+
+st.dataframe(
+    top_movers,
+    use_container_width=True
+)
+
+# =========================
+# SECTOR HEATMAP
+# =========================
 st.subheader("🔥 Sector Heatmap")
+
+sector_df = filtered_df.groupby("sector").agg(
+    stock_count=("symbol", "count"),
+    avg_return=("return", "mean")
+).reset_index()
 
 fig = px.treemap(
     sector_df,
@@ -78,7 +132,7 @@ fig2 = px.treemap(
 st.plotly_chart(fig2, use_container_width=True)
 
 # =========================
-# TABLE
+# FULL TABLE
 # =========================
 st.subheader("📋 Stock Table")
 
