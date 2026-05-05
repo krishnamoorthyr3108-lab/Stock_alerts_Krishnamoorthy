@@ -21,9 +21,19 @@ jobs:
       - name: Install dependencies
         run: pip install pandas yfinance
 
-      - name: Run script
-        run: python stocks.py && python main.py        
+      - name: Run scripts
+        run: |
+          python stocks.py
+          python main.py
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
+
+      - name: Commit results
+        run: |
+          git config --global user.name "bot"
+          git config --global user.email "bot@github.com"
+          git add latest_results.csv
+          git commit -m "update results" || echo "no changes"
+          git push
