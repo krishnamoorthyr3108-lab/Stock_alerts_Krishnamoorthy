@@ -1,24 +1,49 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import os
 
 st.set_page_config(layout="wide")
 
 st.title("📊 Stock Screener Dashboard")
 
 # =========================
-# LOAD DATA
+# LOAD DATA (SAFE)
 # =========================
-df = pd.read_csv("latest_results.csv")
+file_path = "latest_results.csv"
+
+if not os.path.exists(file_path):
+    st.warning("⚠️ Data not available yet. Please wait for GitHub Actions run.")
+    st.stop()
+
+df = pd.read_csv(file_path)
 
 if df.empty:
     st.warning("No data available")
     st.stop()
 
 # =========================
+# SIDEBAR FILTER (DRILL DOWN)
+# =========================
+st.sidebar.header("🔍 Filters")
+
+sector_list = sorted(df['sector'].dropna().unique())
+
+selected_sector = st.sidebar.selectbox(
+    "Select Sector",
+    ["All"] + sector_list
+)
+
+# Apply filter
+if selected_sector != "All":
+    filtered_df = df[df['sector'] == selected_sector]
+else:
+    filtered_df = df.copy()
+
+# =========================
 # SECTOR HEATMAP
 # =========================
-sector_df = df.groupby("sector").agg(
+sector_df = filtered_df.groupby("sector").agg(
     stock_count=("symbol", "count"),
     avg_return=("return", "mean")
 ).reset_index()
@@ -42,7 +67,7 @@ st.plotly_chart(fig, use_container_width=True)
 st.subheader("📈 Stock Heatmap")
 
 fig2 = px.treemap(
-    df,
+    filtered_df,
     path=["sector", "symbol"],
     values="avg_vol",
     color="return",
@@ -57,4 +82,7 @@ st.plotly_chart(fig2, use_container_width=True)
 # =========================
 st.subheader("📋 Stock Table")
 
-st.dataframe(df.sort_values(by="return", ascending=False))
+st.dataframe(
+    filtered_df.sort_values(by="return", ascending=False),
+    use_container_width=True
+)
