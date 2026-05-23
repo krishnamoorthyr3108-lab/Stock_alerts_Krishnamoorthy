@@ -1,0 +1,59 @@
+name: Institutional Daily Pipeline
+
+on:
+  schedule:
+    - cron: "45 3 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+
+  run-pipeline:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+
+          pip install pandas
+          pip install pyarrow
+          pip install yfinance
+          pip install requests
+          pip install numpy
+
+      - name: Run Daily Pipeline
+        run: |
+
+          python scripts/daily_engine.py
+          python scripts/rvol.py
+          python scripts/sector_strength.py
+          python scripts/canslim.py
+          python scripts/dashboard_builder.py
+          python scripts/alert_engine.py
+
+        env:
+
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Commit Dashboard Files
+        run: |
+
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          git add data/
+
+          git commit -m "daily pipeline update" || echo "No changes"
+
+          git push
