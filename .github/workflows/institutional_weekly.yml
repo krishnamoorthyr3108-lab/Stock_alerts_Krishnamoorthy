@@ -1,0 +1,50 @@
+name: Institutional Weekly Pipeline
+
+on:
+  schedule:
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+
+jobs:
+
+  weekly-update:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+
+          pip install pandas
+          pip install pyarrow
+          pip install yfinance
+          pip install requests
+          pip install numpy
+
+      - name: Run Weekly Pipeline
+        run: |
+
+          python scripts/generate_stocks_from_tradingview.py
+          python scripts/historical_engine.py
+          python scripts/quarterly_engine.py
+
+      - name: Commit Weekly Files
+        run: |
+
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          git add data/
+
+          git commit -m "weekly pipeline update" || echo "No changes"
+
+          git push
